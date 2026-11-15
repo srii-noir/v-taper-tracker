@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>V-Taper Mass Protocol</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #0f0f11;
+      --surface: #1a1a1e;
+      --accent: #00ffcc;
+      --text: #e0e0e0;
+      --text-muted: #888;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 20px; }
+    .header { text-align: center; margin-bottom: 30px; }
+    .header h1 { font-size: 1.5rem; letter-spacing: 1px; text-transform: uppercase; color: var(--accent); }
+    .card { background: var(--surface); padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+    
+    /* Checklist */
+    .task { display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid #333; }
+    .task:last-child { border-bottom: none; }
+    .task-label { font-size: 1rem; }
+    input[type="checkbox"] { width: 24px; height: 24px; accent-color: var(--accent); }
+    
+    /* Macro Tracker */
+    .macro-bar-container { background: #333; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 8px; }
+    .macro-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.5s ease; }
+    .macro-inputs { display: flex; gap: 10px; margin-top: 15px; }
+    input[type="number"] { flex: 1; padding: 12px; background: #2a2a2e; border: 1px solid #444; color: white; border-radius: 6px; }
+    button { padding: 12px 24px; background: var(--accent); color: #000; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    
+    .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+    .nav-btn { flex: 1; background: var(--surface); color: var(--text-muted); }
+    .nav-btn.active { background: var(--accent); color: #000; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>V-Taper Protocol</h1>
+    <p style="color: var(--text-muted); margin-top: 5px;">2,900 KCAL • 120G PRO</p>
+  </div>
+
+  <div class="nav">
+    <button class="nav-btn active" onclick="switchTab('checklist')">Checklist</button>
+    <button class="nav-btn" onclick="switchTab('macros')">Macros</button>
+    <button class="nav-btn" onclick="switchTab('analytics')">Analytics</button>
+  </div>
+
+  <!-- Checklist Tab -->
+  <div id="checklist" class="tab-content active card">
+    <div id="taskList"></div>
+  </div>
+
+  <!-- Macros Tab -->
+  <div id="macros" class="tab-content card">
+    <h3>Calories</h3>
+    <p id="cal-text">0 / 2900 kcal</p>
+    <div class="macro-bar-container"><div id="cal-bar" class="macro-bar"></div></div>
+    
+    <h3 style="margin-top:20px;">Protein</h3>
+    <p id="pro-text">0 / 120 g</p>
+    <div class="macro-bar-container"><div id="pro-bar" class="macro-bar"></div></div>
+
+    <div class="macro-inputs">
+      <input type="number" id="cal-input" placeholder="+ Calories">
+      <input type="number" id="pro-input" placeholder="+ Protein (g)">
+    </div>
+    <button onclick="addMacros()" style="width: 100%; margin-top: 15px;">Log Food</button>
+    <button onclick="resetMacros()" style="width: 100%; margin-top: 10px; background: #333; color: white;">Reset Day</button>
+  </div>
+
+  <!-- Analytics Tab -->
+  <div id="analytics" class="tab-content card">
+    <canvas id="consistencyChart"></canvas>
+  </div>
+
+  <script type="module">
+    // Import Firebase SDK (V9)
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    // PASTE YOUR FIREBASE CONFIG HERE
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBnuz6fGxVfXL1GMZMVy_U0DmOpQ4AonKo",
+  authDomain: "mass-tracker-dbf8d.firebaseapp.com",
+  projectId: "mass-tracker-dbf8d",
+  storageBucket: "mass-tracker-dbf8d.firebasestorage.app",
+  messagingSenderId: "226027662295",
+  appId: "1:226027662295:web:bcdc9bfa423f31794ff992",
+  measurementId: "G-7KSD9NKG8C"
+};
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const docRef = doc(db, "users", "srii_tracker_data"); // Specific document for your data
+
+    const tasks = [
+      "2 Bananas (Pre-Workout)",
+      "Single Aesthetic Workout (Pull/Push/Squat)",
+      "4 Boiled Eggs (Post-Workout)",
+      "Mass Shake (Milk, Nuts, PB)",
+      "7-8 Dates",
+      "Lunch (Rice/Parotta + Chicken)",
+      "Dinner (Chapathis + Chicken)",
+      "Mixed Nuts"
+    ];
+
+    let state = {
+      checklist: Array(8).fill(false),
+      calories: 0,
+      protein: 0,
+      history: [40, 60, 80, 50, 90, 100, 70] // Sample past 7 days
+    };
+
+    let chartInstance;
+
+    // Listen for live database changes across all devices
+    onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        state = docSnap.data();
+        renderApp();
+      } else {
+        // Initialize db if empty
+        saveToCloud();
+      }
+    });
+
+    function saveToCloud() {
+      setDoc(docRef, state); // Pushes changes to Firebase immediately
+    }
+
+    function renderApp() {
+      // 1. Render Checklist
+      const taskDiv = document.getElementById("taskList");
+      taskDiv.innerHTML = "";
+      tasks.forEach((task, index) => {
+        const div = document.createElement("div");
+        div.className = "task";
+        div.innerHTML = `
+          <span class="task-label">${task}</span>
+          <input type="checkbox" ${state.checklist[index] ? "checked" : ""} 
+                 onchange="toggleTask(${index}, this.checked)">
+        `;
+        taskDiv.appendChild(div);
+      });
+
+      // 2. Render Macros
+      document.getElementById("cal-text").innerText = `${state.calories} / 2900 kcal`;
+      document.getElementById("pro-text").innerText = `${state.protein} / 120 g`;
+      
+      const calPercent = Math.min((state.calories / 2900) * 100, 100);
+      const proPercent = Math.min((state.protein / 120) * 100, 100);
+      
+      document.getElementById("cal-bar").style.width = `${calPercent}%`;
+      document.getElementById("pro-bar").style.width = `${proPercent}%`;
+      
+      if (calPercent === 100) document.getElementById("cal-bar").style.background = "#fff";
+      else document.getElementById("cal-bar").style.background = "var(--accent)";
+
+      // 3. Render Chart
+      renderChart();
+    }
+
+    window.toggleTask = function(index, isChecked) {
+      state.checklist[index] = isChecked;
+      saveToCloud(); // Syncs to laptop/phone instantly
+    }
+
+    window.addMacros = function() {
+      const cals = parseInt(document.getElementById("cal-input").value) || 0;
+      const pro = parseInt(document.getElementById("pro-input").value) || 0;
+      state.calories += cals;
+      state.protein += pro;
+      document.getElementById("cal-input").value = "";
+      document.getElementById("pro-input").value = "";
+      saveToCloud();
+    }
+
+    window.resetMacros = function() {
+      state.calories = 0;
+      state.protein = 0;
+      state.checklist = Array(8).fill(false);
+      saveToCloud();
+    }
+
+    window.switchTab = function(tabId) {
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById(tabId).classList.add('active');
+      event.target.classList.add('active');
+    }
+
+    function renderChart() {
+      const ctx = document.getElementById('consistencyChart').getContext('2d');
+      if(chartInstance) chartInstance.destroy();
+      
+      chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['M', 'T', 'W', 'T', 'F', 'S', 'S'],
+          datasets: [{
+            label: 'Completion %',
+            data: state.history,
+            backgroundColor: '#00ffcc',
+            borderRadius: 4
+          }]
+        },
+        options: {
+          scales: { y: { beginAtZero: true, max: 100, grid: { color: '#333' } }, x: { grid: { display: false } } },
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
